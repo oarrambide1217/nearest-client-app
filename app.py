@@ -7,7 +7,7 @@ import os
 
 app = Flask(__name__)
 
-CSV_FILE = "Spa Surge Client Locations with geocodes, March 20 update v2.csv"
+CSV_FILE = "client_stores.csv"
 
 if not os.path.exists(CSV_FILE):
     raise FileNotFoundError(f"Could not find CSV file: {CSV_FILE}")
