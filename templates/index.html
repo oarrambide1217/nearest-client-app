@@ -12,7 +12,6 @@
 
     <div style="display:flex; gap:20px; align-items:flex-start;">
 
-      <!-- Tableau Dashboard -->
       <div style="width:60%; background:white; padding:15px; border-radius:10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
         <tableau-viz
           id="tableauViz"
@@ -24,14 +23,13 @@
         </tableau-viz>
       </div>
 
-      <!-- Chat Panel -->
       <div style="width:40%; display:flex; flex-direction:column; height:730px; background:white; padding:20px; border-radius:10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
         <h2 style="margin-top:0;">Ask the Assistant</h2>
 
         <div id="chat"
              style="flex:1; overflow-y:auto; border:1px solid #ddd; padding:12px; border-radius:10px; background:#fafafa; margin-bottom:12px;">
           <div style="margin: 10px 0; padding: 10px; border-radius: 10px; max-width: 85%; background: #e9ecef;">
-            Enter a prospect address and I’ll tell you the closest current client, then filter the map to that location.
+            Enter a prospect address and I’ll tell you the closest current client. If Tableau filtering works, I’ll filter the map too.
           </div>
         </div>
 
@@ -53,7 +51,7 @@
   </div>
 
   <script type="module">
-    import { FilterUpdateType, TableauEventType } from "https://public.tableau.com/javascripts/api/tableau.embedding.3.latest.min.js";
+    import { FilterUpdateType } from "https://public.tableau.com/javascripts/api/tableau.embedding.3.latest.min.js";
 
     const viz = document.getElementById("tableauViz");
 
@@ -68,7 +66,7 @@
       bubble.style.lineHeight = "1.4";
 
       if (sender === "user") {
-        bubble.style.background = "#007bff";
+        bubble.style.background = "#1a73e8";
         bubble.style.color = "white";
         bubble.style.marginLeft = "auto";
       } else {
@@ -82,12 +80,14 @@
     }
 
     async function filterTableauToClient(clientName) {
-      await viz.workbook.activateSheetAsync("Dashboard 1").catch(() => {});
+      if (!viz || !viz.workbook) {
+        throw new Error("Tableau workbook is not ready yet.");
+      }
 
       const activeSheet = viz.workbook.activeSheet;
 
       if (activeSheet.sheetType === "dashboard") {
-        const worksheets = activeSheet.worksheets;
+        const worksheets = activeSheet.worksheets || [];
 
         for (const ws of worksheets) {
           try {
@@ -98,22 +98,6 @@
         }
       } else {
         await activeSheet.applyFilterAsync("Client", [clientName], FilterUpdateType.Replace);
-      }
-    }
-
-    async function clearTableauClientFilter() {
-      const activeSheet = viz.workbook.activeSheet;
-
-      if (activeSheet.sheetType === "dashboard") {
-        for (const ws of activeSheet.worksheets) {
-          try {
-            await ws.applyFilterAsync("Client", [], FilterUpdateType.All);
-          } catch (err) {
-            console.log(`Could not clear filter on worksheet ${ws.name}:`, err);
-          }
-        }
-      } else {
-        await activeSheet.applyFilterAsync("Client", [], FilterUpdateType.All);
       }
     }
 
@@ -129,6 +113,8 @@
       addMessage("user", address);
       addressInput.value = "";
 
+      let data;
+
       try {
         const response = await fetch("/nearest-client", {
           method: "POST",
@@ -138,7 +124,12 @@
           body: JSON.stringify({ address })
         });
 
-        const data = await response.json();
+        data = await response.json();
+
+        if (!response.ok) {
+          addMessage("bot", data.error || "The server returned an error.");
+          return;
+        }
 
         if (data.error) {
           addMessage("bot", data.error);
@@ -155,19 +146,38 @@
           });
         }
 
+        let mapsHtml = "";
+        if (data.maps_link) {
+          mapsHtml = `<br><br><a href="${data.maps_link}" target="_blank" rel="noopener noreferrer">Open directions in Google Maps</a>`;
+        }
+
+        let insightHtml = "";
+        if (data.insight) {
+          insightHtml = `<br><br>${data.insight}`;
+        }
+
         addMessage("bot", `
           Closest client: <b>${c.store_name}</b><br>
           Address: ${c.address}<br>
-          Distance: <b>${c.distance} miles</b><br><br>
-          Filtering Tableau map to <b>${c.store_name}</b>...
+          Distance: <b>${c.distance} miles</b>
           ${topThreeHtml}
+          ${insightHtml}
+          ${mapsHtml}
         `);
 
-        await filterTableauToClient(c.store_name);
-
       } catch (error) {
-        console.error(error);
-        addMessage("bot", "Something went wrong while checking the nearest client.");
+        console.error("Fetch error:", error);
+        addMessage("bot", "The server request failed.");
+        return;
+      }
+
+      try {
+        if (data && data.closest && data.closest.store_name) {
+          await filterTableauToClient(data.closest.store_name);
+        }
+      } catch (error) {
+        console.error("Tableau filter error:", error);
+        addMessage("bot", "I found the nearest client, but Tableau filtering failed.");
       }
     }
 
