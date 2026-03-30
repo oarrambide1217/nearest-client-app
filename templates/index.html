@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AI Territory Assistant</title>
+  <meta charset="UTF-8">
+  <script type="module" src="https://public.tableau.com/javascripts/api/tableau.embedding.3.latest.min.js"></script>
+</head>
+<body style="font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f7f7f7;">
+
+  <div style="padding: 20px;">
+    <h1 style="margin-bottom: 20px;">AI Territory Assistant</h1>
+
+    <div style="display:flex; gap:20px; align-items:flex-start;">
+
+      <!-- Tableau Dashboard -->
+      <div style="width:60%; background:white; padding:15px; border-radius:10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+        <tableau-viz
+          id="tableauViz"
+          src="https://public.tableau.com/views/SpaSurgeClientsByLocation/Dashboard1?:showVizHome=no"
+          toolbar="bottom"
+          hide-tabs
+          width="100%"
+          height="700">
+        </tableau-viz>
+      </div>
+
+      <!-- Chat Panel -->
+      <div style="width:40%; display:flex; flex-direction:column; height:730px; background:white; padding:20px; border-radius:10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+        <h2 style="margin-top:0;">Ask the Assistant</h2>
+
+        <div id="chat"
+             style="flex:1; overflow-y:auto; border:1px solid #ddd; padding:12px; border-radius:10px; background:#fafafa; margin-bottom:12px;">
+          <div style="margin: 10px 0; padding: 10px; border-radius: 10px; max-width: 85%; background: #e9ecef;">
+            Enter a prospect address and I’ll tell you the closest current client, then filter the map to that location.
+          </div>
+        </div>
+
+        <div style="display:flex; gap:10px;">
+          <input
+            id="addressInput"
+            type="text"
+            placeholder="Enter new client address..."
+            style="flex:1; padding:10px; border-radius:8px; border:1px solid #ccc; font-size:14px;"
+          >
+          <button
+            onclick="findNearest()"
+            style="padding:10px 16px; border:none; border-radius:8px; background:#007bff; color:white; cursor:pointer; font-size:14px;">
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { FilterUpdateType, TableauEventType } from "https://public.tableau.com/javascripts/api/tableau.embedding.3.latest.min.js";
+
+    const viz = document.getElementById("tableauViz");
+
+    function addMessage(sender, text) {
+      const chat = document.getElementById("chat");
+
+      const bubble = document.createElement("div");
+      bubble.style.margin = "10px 0";
+      bubble.style.padding = "10px";
+      bubble.style.borderRadius = "10px";
+      bubble.style.maxWidth = "85%";
+      bubble.style.lineHeight = "1.4";
+
+      if (sender === "user") {
+        bubble.style.background = "#007bff";
+        bubble.style.color = "white";
+        bubble.style.marginLeft = "auto";
+      } else {
+        bubble.style.background = "#e9ecef";
+        bubble.style.color = "#222";
+      }
+
+      bubble.innerHTML = text;
+      chat.appendChild(bubble);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function filterTableauToClient(clientName) {
+      await viz.workbook.activateSheetAsync("Dashboard 1").catch(() => {});
+
+      const activeSheet = viz.workbook.activeSheet;
+
+      if (activeSheet.sheetType === "dashboard") {
+        const worksheets = activeSheet.worksheets;
+
+        for (const ws of worksheets) {
+          try {
+            await ws.applyFilterAsync("Client", [clientName], FilterUpdateType.Replace);
+          } catch (err) {
+            console.log(`Could not apply filter on worksheet ${ws.name}:`, err);
+          }
+        }
+      } else {
+        await activeSheet.applyFilterAsync("Client", [clientName], FilterUpdateType.Replace);
+      }
+    }
+
+    async function clearTableauClientFilter() {
+      const activeSheet = viz.workbook.activeSheet;
+
+      if (activeSheet.sheetType === "dashboard") {
+        for (const ws of activeSheet.worksheets) {
+          try {
+            await ws.applyFilterAsync("Client", [], FilterUpdateType.All);
+          } catch (err) {
+            console.log(`Could not clear filter on worksheet ${ws.name}:`, err);
+          }
+        }
+      } else {
+        await activeSheet.applyFilterAsync("Client", [], FilterUpdateType.All);
+      }
+    }
+
+    async function findNearest() {
+      const addressInput = document.getElementById("addressInput");
+      const address = addressInput.value.trim();
+
+      if (!address) {
+        addMessage("bot", "Please enter an address first.");
+        return;
+      }
+
+      addMessage("user", address);
+      addressInput.value = "";
+
+      try {
+        const response = await fetch("/nearest-client", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ address })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          addMessage("bot", data.error);
+          return;
+        }
+
+        const c = data.closest;
+
+        let topThreeHtml = "";
+        if (data.top_3 && data.top_3.length > 0) {
+          topThreeHtml = "<br><br><b>Top 3 closest:</b><br>";
+          data.top_3.forEach(store => {
+            topThreeHtml += `• ${store.store_name}: ${store.distance} miles<br>`;
+          });
+        }
+
+        addMessage("bot", `
+          Closest client: <b>${c.store_name}</b><br>
+          Address: ${c.address}<br>
+          Distance: <b>${c.distance} miles</b><br><br>
+          Filtering Tableau map to <b>${c.store_name}</b>...
+          ${topThreeHtml}
+        `);
+
+        await filterTableauToClient(c.store_name);
+
+      } catch (error) {
+        console.error(error);
+        addMessage("bot", "Something went wrong while checking the nearest client.");
+      }
+    }
+
+    document.getElementById("addressInput").addEventListener("keypress", function(event) {
+      if (event.key === "Enter") {
+        findNearest();
+      }
+    });
+
+    window.findNearest = findNearest;
+  </script>
+</body>
+</html>

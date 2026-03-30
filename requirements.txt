@@ -1,0 +1,4 @@
+flask
+geopy
+pandas
+gunicorn
